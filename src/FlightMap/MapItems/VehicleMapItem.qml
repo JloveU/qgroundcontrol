@@ -141,7 +141,7 @@ MapQuickItem {
             anchors.horizontalCenter:   parent.horizontalCenter
             map:                        _map
             text:                       vehicleLabelText
-            font.pointSize:             ScreenTools.smallFontPointSize
+            font.pointSize:             ScreenTools.defaultFontPointSize
             visible:                    _adsbVehicle ? !isNaN(altitude) : _multiVehicle
             property string vehicleLabelText: visible ?
                                                   (_adsbVehicle ?
@@ -152,13 +152,25 @@ MapQuickItem {
         }
 
         QGCMapLabel {
+            id:                         vehicleLabel2
             anchors.top:                vehicleLabel.bottom
             anchors.horizontalCenter:   parent.horizontalCenter
             map:                        _map
             text:                       vehicleLabelText
-            font.pointSize:             ScreenTools.smallFontPointSize
+            font.pointSize:             ScreenTools.defaultFontPointSize
             visible:                    _adsbVehicle ? !isNaN(altitude) : _multiVehicle
             property string vehicleLabelText: visible && _adsbVehicle ? callsign : ""
+        }
+
+        QGCMapLabel {
+            id:                         vehicleLabel3
+            anchors.top:                vehicleLabel2.bottom
+            anchors.horizontalCenter:   parent.horizontalCenter
+            map:                        _map
+            text:                       vehicleLabelText
+            font.pointSize:             ScreenTools.defaultFontPointSize
+            visible:                    _adsbVehicle ? false : true
+            property string vehicleLabelText: visible ? ("" + vehicle.coordinate.altitude.toFixed(2) + " " + "m") : ""
         }
     }
 }
