@@ -16,6 +16,7 @@
 #include "AppMessages.h"
 #include "QmlObjectListModel.h"
 #include "VideoReceiver.h"
+#include "QGCLoggingCategory.h"
 
 #include <QtQml>
 #include <QQmlEngine>
@@ -312,4 +313,19 @@ QmlObjectListModel* QGCCorePlugin::customMapItems(void)
 VideoReceiver* QGCCorePlugin::createVideoReceiver(QObject* parent)
 {
     return new VideoReceiver(parent);
+}
+
+bool QGCCorePlugin::guidedActionsControllerLogging(void) const
+{
+    return GuidedActionsControllerLog().isDebugEnabled();
+}
+
+QString QGCCorePlugin::stableVersionCheckFileUrl(void) const
+{
+#ifdef QGC_CUSTOM_BUILD
+    // Custom builds must override to turn on and provide their own location
+    return QString();
+#else
+    return QString("https://s3-us-west-2.amazonaws.com/qgroundcontrol/latest/QGC.version.txt");
+#endif
 }

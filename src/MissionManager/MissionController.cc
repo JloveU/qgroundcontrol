@@ -58,6 +58,7 @@ const int   MissionController::_missionFileVersion =            2;
 MissionController::MissionController(PlanMasterController* masterController, QObject *parent)
     : PlanElementController         (masterController, parent)
     , _missionManager               (_managerVehicle->missionManager())
+    , _missionItemCount             (0)
     , _visualItems                  (nullptr)
     , _settingsItem                 (nullptr)
     , _firstItemsFromVehicle        (false)
@@ -162,6 +163,9 @@ void MissionController::_newMissionItemsAvailableFromVehicle(bool removeAllReque
         QmlObjectListModel* newControllerMissionItems = new QmlObjectListModel(this);
         const QList<MissionItem*>& newMissionItems = _missionManager->missionItems();
         qCDebug(MissionControllerLog) << "loading from vehicle: count"<< newMissionItems.count();
+
+        _missionItemCount = newMissionItems.count();
+        emit missionItemCountChanged(_missionItemCount);
 
         int i = 0;
         if (_controllerVehicle->firmwarePlugin()->sendHomePositionToVehicle() && newMissionItems.count() != 0) {
@@ -1152,7 +1156,7 @@ void MissionController::_recalcWaypointLines(void)
         // Create a temporary QObjectList and replace the model data
         QObjectList objs;
         objs.reserve(_linesTable.count());
-        foreach(CoordinateVector *vect, _linesTable.values()) {
+        for(CoordinateVector *vect: _linesTable.values()) {
             objs.append(vect);
         }
 

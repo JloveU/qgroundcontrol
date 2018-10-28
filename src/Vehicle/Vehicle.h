@@ -656,6 +656,8 @@ public:
     Q_PROPERTY(Fact* altitudeAMSL       READ altitudeAMSL       CONSTANT)
     Q_PROPERTY(Fact* flightDistance     READ flightDistance     CONSTANT)
     Q_PROPERTY(Fact* distanceToHome     READ distanceToHome     CONSTANT)
+    Q_PROPERTY(Fact* headingToHome      READ headingToHome      CONSTANT)
+    Q_PROPERTY(Fact* distanceToGCS      READ distanceToGCS      CONSTANT)
     Q_PROPERTY(Fact* hobbs              READ hobbs              CONSTANT)
 
     Q_PROPERTY(FactGroup* gps               READ gpsFactGroup               CONSTANT)
@@ -744,14 +746,10 @@ public:
     Q_INVOKABLE void triggerCamera(void);
     Q_INVOKABLE void sendPlan(QString planFile);
 
-#if 0
-    // Temporarily removed, waiting for new command implementation
     /// Test motor
     ///     @param motor Motor number, 1-based
     ///     @param percent 0-no power, 100-full power
-    ///     @param timeoutSecs Number of seconds for motor to run
-    Q_INVOKABLE void motorTest(int motor, int percent, int timeoutSecs);
-#endif
+    Q_INVOKABLE void motorTest(int motor, int percent);
 
     bool guidedModeSupported    (void) const;
     bool pauseVehicleSupported  (void) const;
@@ -945,6 +943,8 @@ public:
     Fact* altitudeAMSL      (void) { return &_altitudeAMSLFact; }
     Fact* flightDistance    (void) { return &_flightDistanceFact; }
     Fact* distanceToHome    (void) { return &_distanceToHomeFact; }
+    Fact* headingToHome     (void) { return &_headingToHomeFact; }
+    Fact* distanceToGCS     (void) { return &_distanceToGCSFact; }
     Fact* hobbs             (void) { return &_hobbsFact; }
 
     FactGroup* gpsFactGroup             (void) { return &_gpsFactGroup; }
@@ -1093,6 +1093,7 @@ signals:
     void priorityLinkNameChanged(const QString& priorityLinkName);
     void linksChanged(void);
     void linksPropertiesChanged(void);
+    void textMessageReceived(int uasid, int componentid, int severity, QString text);
 
     void messagesReceivedChanged    ();
     void messagesSentChanged        ();
@@ -1188,7 +1189,8 @@ private slots:
     void _sendMavCommandAgain(void);
     void _clearTrajectoryPoints(void);
     void _clearCameraTriggerPoints(void);
-    void _updateDistanceToHome(void);
+    void _updateDistanceHeadingToHome(void);
+    void _updateDistanceToGCS(void);
     void _updateHobbsMeter(void);
     void _vehicleParamLoaded(bool ready);
     void _sendQGCTimeToVehicle(void);
@@ -1233,6 +1235,7 @@ private:
     void _handleAttitudeTarget(mavlink_message_t& message);
     void _handleDistanceSensor(mavlink_message_t& message);
     void _handleEstimatorStatus(mavlink_message_t& message);
+    void _handleStatusText(mavlink_message_t& message);
     // ArduPilot dialect messages
 #if !defined(NO_ARDUPILOT_DIALECT)
     void _handleCameraFeedback(const mavlink_message_t& message);
@@ -1433,6 +1436,8 @@ private:
     uint64_t    _mavlinkLossCount       = 0;
     float       _mavlinkLossPercent     = 0.0f;
 
+    QMap<QString, QTime> _noisySpokenPrearmMap; ///< Used to prevent PreArm messages from being spoken too often
+
     // FactGroup facts
 
     Fact _rollFact;
@@ -1449,6 +1454,8 @@ private:
     Fact _flightDistanceFact;
     Fact _flightTimeFact;
     Fact _distanceToHomeFact;
+    Fact _headingToHomeFact;
+    Fact _distanceToGCSFact;
     Fact _hobbsFact;
 
     VehicleGPSFactGroup             _gpsFactGroup;
@@ -1476,6 +1483,8 @@ private:
     static const char* _flightDistanceFactName;
     static const char* _flightTimeFactName;
     static const char* _distanceToHomeFactName;
+    static const char* _headingToHomeFactName;
+    static const char* _distanceToGCSFactName;
     static const char* _hobbsFactName;
 
     static const char* _gpsFactGroupName;

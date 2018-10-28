@@ -24,6 +24,7 @@
 #include <QStyleFactory>
 #include <QAction>
 #include <QStringListModel>
+#include <QRegularExpression>
 
 #ifdef QGC_ENABLE_BLUETOOTH
 #include <QBluetoothLocalDevice>
@@ -87,6 +88,7 @@
 #include "EditPositionDialogController.h"
 #include "FactValueSliderListModel.h"
 #include "KMLFileHelper.h"
+#include "QGCFileDownload.h"
 
 #ifndef NO_SERIAL_LINK
 #include "SerialLink.h"
@@ -99,6 +101,7 @@
 #include "MainWindow.h"
 #include "GeoTagController.h"
 #include "MavlinkConsoleController.h"
+#include "GPS/GPSManager.h"
 #endif
 
 #ifdef QGC_RTLAB_ENABLED
@@ -149,20 +152,22 @@ static QObject* kmlFileHelperSingletonFactory(QQmlEngine*, QJSEngine*)
 
 QGCApplication::QGCApplication(int &argc, char* argv[], bool unitTesting)
 #ifdef __mobile__
-    : QGuiApplication       (argc, argv)
-    , _qmlAppEngine         (nullptr)
+    : QGuiApplication           (argc, argv)
+    , _qmlAppEngine             (nullptr)
 #else
-    : QApplication          (argc, argv)
+    : QApplication              (argc, argv)
 #endif
-    , _runningUnitTests     (unitTesting)
-    , _logOutput            (false)
-    , _fakeMobile           (false)
-    , _settingsUpgraded     (false)
-#ifdef QT_DEBUG
-    , _testHighDPI          (false)
-#endif
-    , _toolbox              (nullptr)
-    , _bluetoothAvailable   (false)
+    , _runningUnitTests         (unitTesting)
+    , _logOutput                (false)
+    , _fakeMobile               (false)
+    , _settingsUpgraded         (false)
+    , _majorVersion             (0)
+    , _minorVersion             (0)
+    , _buildVersion             (0)
+    , _currentVersionDownload   (nullptr)
+    , _gpsRtkFactGroup          (nullptr)
+    , _toolbox                  (nullptr)
+    , _bluetoothAvailable       (false)
 {
     _app = this;
 
@@ -239,9 +244,6 @@ QGCApplication::QGCApplication(int &argc, char* argv[], bool unitTesting)
         { "--logging",          &logging,               &loggingOptions },
         { "--fake-mobile",      &_fakeMobile,           nullptr },
         { "--log-output",       &_logOutput,            nullptr },
-    #ifdef QT_DEBUG
-        { "--test-high-dpi",    &_testHighDPI,          nullptr },
-    #endif
         // Add additional command line option flags here
     };
 
@@ -336,6 +338,19 @@ QGCApplication::QGCApplication(int &argc, char* argv[], bool unitTesting)
 
     _toolbox = new QGCToolbox(this);
     _toolbox->setChildToolboxes();
+
+#ifndef __mobile__
+    _gpsRtkFactGroup = new GPSRTKFactGroup(this);
+   GPSManager *gpsManager = _toolbox->gpsManager();
+   if (gpsManager) {
+       connect(gpsManager, &GPSManager::onConnect,          this, &QGCApplication::_onGPSConnect);
+       connect(gpsManager, &GPSManager::onDisconnect,       this, &QGCApplication::_onGPSDisconnect);
+       connect(gpsManager, &GPSManager::surveyInStatus,     this, &QGCApplication::_gpsSurveyInStatus);
+       connect(gpsManager, &GPSManager::satelliteUpdate,    this, &QGCApplication::_gpsNumSatellites);
+   }
+#endif /* __mobile__ */
+
+    _checkForNewVersion();
 }
 
 void QGCApplication::_shutdown(void)
@@ -672,8 +687,8 @@ QObject* QGCApplication::_rootQmlObject()
 
 void QGCApplication::showMessage(const QString& message)
 {
-    // Special case hack for ArduPilot prearm messages. These show up in the center of the map, so no need for popup.
-    if (message.contains("PreArm:")) {
+    // PreArm messages are handled by Vehicle and shown in Map
+    if (message.startsWith(QStringLiteral("PreArm")) || message.startsWith(QStringLiteral("preflight"), Qt::CaseInsensitive)) {
         return;
     }
 
@@ -708,3 +723,96 @@ bool QGCApplication::isInternetAvailable()
 {
     return getQGCMapEngine()->isInternetActive();
 }
+
+void QGCApplication::_checkForNewVersion(void)
+{
+#ifndef __mobile__
+    if (!_runningUnitTests) {
+        if (_parseVersionText(applicationVersion(), _majorVersion, _minorVersion, _buildVersion)) {
+            QString versionCheckFile = toolbox()->corePlugin()->stableVersionCheckFileUrl();
+            if (!versionCheckFile.isEmpty()) {
+                _currentVersionDownload = new QGCFileDownload(this);
+                connect(_currentVersionDownload, &QGCFileDownload::downloadFinished, this, &QGCApplication::_currentVersionDownloadFinished);
+                connect(_currentVersionDownload, &QGCFileDownload::error, this, &QGCApplication::_currentVersionDownloadError);
+                _currentVersionDownload->download(versionCheckFile);
+            }
+        }
+    }
+#endif
+}
+
+void QGCApplication::_currentVersionDownloadFinished(QString remoteFile, QString localFile)
+{
+    Q_UNUSED(remoteFile);
+
+#ifdef __mobile__
+    Q_UNUSED(localFile);
+#else
+    QFile versionFile(localFile);
+    if (versionFile.open(QIODevice::ReadOnly)) {
+        QTextStream textStream(&versionFile);
+        QString version = textStream.readLine();
+
+        qDebug() << version;
+
+        int majorVersion, minorVersion, buildVersion;
+        if (_parseVersionText(version, majorVersion, minorVersion, buildVersion)) {
+            if (_majorVersion < majorVersion ||
+                    (_majorVersion == majorVersion && _minorVersion < minorVersion) ||
+                    (_majorVersion == majorVersion && _minorVersion == minorVersion && _buildVersion < buildVersion)) {
+                QGCMessageBox::information(tr("New Version Available"), tr("There is a newer version of %1 available. You can download it from %2.").arg(applicationName()).arg(toolbox()->corePlugin()->stableDownloadLocation()));
+            }
+        }
+    }
+
+    _currentVersionDownload->deleteLater();
+#endif
+}
+
+void QGCApplication::_currentVersionDownloadError(QString errorMsg)
+{
+    Q_UNUSED(errorMsg);
+    _currentVersionDownload->deleteLater();
+}
+
+bool QGCApplication::_parseVersionText(const QString& versionString, int& majorVersion, int& minorVersion, int& buildVersion)
+{
+    QRegularExpression regExp("v(\\d+)\\.(\\d+)\\.(\\d+)");
+    QRegularExpressionMatch match = regExp.match(versionString);
+    if (match.hasMatch() && match.lastCapturedIndex() == 3) {
+        majorVersion = match.captured(1).toInt();
+        minorVersion = match.captured(2).toInt();
+        buildVersion = match.captured(3).toInt();
+        return true;
+    }
+
+    return false;
+}
+
+
+void QGCApplication::_onGPSConnect()
+{
+    _gpsRtkFactGroup->connected()->setRawValue(true);
+}
+
+void QGCApplication::_onGPSDisconnect()
+{
+    _gpsRtkFactGroup->connected()->setRawValue(false);
+}
+
+void QGCApplication::_gpsSurveyInStatus(float duration, float accuracyMM,  double latitude, double longitude, float altitude, bool valid, bool active)
+{
+    _gpsRtkFactGroup->currentDuration()->setRawValue(duration);
+    _gpsRtkFactGroup->currentAccuracy()->setRawValue(accuracyMM/1000.0);
+    _gpsRtkFactGroup->currentLatitude()->setRawValue(latitude);
+    _gpsRtkFactGroup->currentLongitude()->setRawValue(longitude);
+    _gpsRtkFactGroup->currentAltitude()->setRawValue(altitude);
+    _gpsRtkFactGroup->valid()->setRawValue(valid);
+    _gpsRtkFactGroup->active()->setRawValue(active);
+}
+
+void QGCApplication::_gpsNumSatellites(int numSatellites)
+{
+    _gpsRtkFactGroup->numSatellites()->setRawValue(numSatellites);
+}
+
